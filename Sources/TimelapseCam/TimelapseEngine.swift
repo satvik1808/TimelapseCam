@@ -141,12 +141,17 @@ private struct ClockFile {
 /// writes them to a .mov file. Each captured frame becomes one output frame,
 /// so a 1 hour recording at 1 frame / 5 s and 30 fps plays back in 24 s.
 final class TimelapseEngine: NSObject, ObservableObject {
+    /// One engine for the whole app, shared by the main window and the menu bar item.
+    static let shared = TimelapseEngine()
 
     // MARK: UI state (main thread only)
 
     @Published private(set) var cameras: [AVCaptureDevice] = []
     @Published private(set) var selectedCameraID = ""
     @Published private(set) var isPreviewing = false
+    /// Whether the live feed is switched on. Off stops the camera session.
+    @Published private(set) var liveFeedOn = true
+    private var started = false
     @Published private(set) var permissionDenied = false
     @Published private(set) var isRecording = false
     @Published private(set) var isPaused = false
@@ -211,8 +216,25 @@ final class TimelapseEngine: NSObject, ObservableObject {
 
     // MARK: Camera & preview
 
-    /// Asks for camera permission if needed, then starts the live preview.
+    /// Turns the live feed on or off. Off stops the camera session, so the camera light goes out.
+    /// Ignored while recording, because recording needs the feed.
+    func setLiveFeed(_ on: Bool) {
+        guard !isRecording, on != liveFeedOn else { return }
+        liveFeedOn = on
+        if on {
+            if selectedCameraID.isEmpty { beginPreview() } else { selectCamera(selectedCameraID) }
+        } else {
+            isPreviewing = false
+            sessionQueue.async {
+                if self.session.isRunning { self.session.stopRunning() }
+            }
+        }
+    }
+
+    /// Asks for camera permission if needed, then starts the live preview. Only the first call does anything.
     func start() {
+        guard !started else { return }
+        started = true
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             beginPreview()

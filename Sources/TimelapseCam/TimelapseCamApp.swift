@@ -4,8 +4,11 @@ import AppKit
 
 @main
 struct TimelapseCamApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
-        WindowGroup("Timelapse Cam") {
+        // A single window, so the menu bar item can reopen it.
+        Window("Timelapse Cam", id: "main") {
             ContentView()
         }
         .defaultSize(width: 580, height: 560)
@@ -13,8 +16,24 @@ struct TimelapseCamApp: App {
     }
 }
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menuBar: MenuBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // The camera starts with the app, so the menu bar preview works even with the window closed.
+        TimelapseEngine.shared.start()
+        menuBar = MenuBarController(engine: TimelapseEngine.shared)
+    }
+
+    /// Keep running in the menu bar after the window is closed.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+}
+
 struct ContentView: View {
-    @StateObject private var engine = TimelapseEngine()
+    @ObservedObject private var engine = TimelapseEngine.shared
+    @Environment(\.openWindow) private var openWindow
     @State private var showSettings = false
     @Environment(\.controlActiveState) private var windowState
     @AppStorage("animatedBackground") private var animatedBackground = true
@@ -94,7 +113,27 @@ struct ContentView: View {
             engine.setSurfaceScanning(showsSurfaces)
             engine.applyCamera(CameraSettings.fromStorage())
             engine.start()
+            MenuBarController.openMainWindow = { openWindow(id: "main") }
         }
+    }
+
+    /// Switches the live feed on or off. Disabled while recording, because recording needs the feed.
+    private var liveFeedButton: some View {
+        Button {
+            engine.setLiveFeed(!engine.liveFeedOn)
+        } label: {
+            Label(engine.liveFeedOn ? "Live" : "Off",
+                  systemImage: engine.liveFeedOn ? "eye.fill" : "eye.slash.fill")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .background(.black.opacity(0.55), in: Capsule())
+        .disabled(engine.isRecording)
+        .padding(8)
+        .help(engine.liveFeedOn ? "Turn off the live feed" : "Turn on the live feed")
     }
 
     /// Surfaces are scanned and highlighted only while placing the clock on a wall, not while recording.
@@ -156,12 +195,21 @@ struct ContentView: View {
                     }
                 }
                 .foregroundStyle(.white)
-            } else {
+            } else if engine.liveFeedOn {
                 CameraPreview(session: engine.session, mirrored: mirror, exposureEV: Float(exposureBias))
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "video.slash.fill").font(.title)
+                    Text("Live feed is off").font(.headline)
+                }
+                .foregroundStyle(.white.opacity(0.8))
             }
         }
         .aspectRatio(16.0 / 9.0, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            liveFeedButton
+        }
         .overlay {
             if clockEnabled {
                 ClockOverlay(x: $clockX, y: $clockY, quadStorage: $clockQuad,
@@ -283,7 +331,9 @@ struct ContentView: View {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([saved]) }
                     .glassSecondaryButton()
             } else {
-                Text(engine.isPreviewing ? "Ready. ⌘R to record, ⌘P to pause." : "Starting camera…")
+                Text(engine.isPreviewing ? "Ready. ⌘R to record, ⌘P to pause."
+                     : engine.liveFeedOn ? "Starting camera…"
+                     : "Live feed is off. Turn it on to record.")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
