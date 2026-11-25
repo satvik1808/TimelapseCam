@@ -180,7 +180,9 @@ final class TimelapseEngine: NSObject, ObservableObject {
 
     let session = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let sessionQueue = DispatchQueue(label: "timelapse.session")
+    // Session changes run on the main thread. The preview layers (main window and menu bar) also change the
+    // session's connections on the main thread, and running them on a background queue crashed AVFoundation.
+    private let sessionQueue = DispatchQueue.main
     private let videoQueue = DispatchQueue(label: "timelapse.video", qos: .userInitiated)
     private let ciContext = CIContext()
     private var currentInput: AVCaptureDeviceInput?
